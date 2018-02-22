@@ -206,7 +206,18 @@ int main(int argc, char* argv[])
   for (int tt = 0; tt < params.maxIters; tt++)
   {
     timestep(params, cells, tmp_cells, obstacles);
-    av_vels[tt] = av_velocity(params, cells, obstacles);
+
+    if (rank == MASTER)
+    {
+      
+      // MPI gather all cells
+
+      // MPI gather all obstacles
+
+
+      av_vels[tt] = av_velocity(params, cells, obstacles);
+
+    }
 #ifdef DEBUG
     printf("==timestep: %d==\n", tt);
     printf("av velocity: %.12E\n", av_vels[tt]);
@@ -504,6 +515,8 @@ int initialise(const char* paramfile, const char* obstaclefile,
   int    blocked;        /* indicates whether a cell is blocked by an obstacle */
   int    retval;         /* to hold return value for checking */
 
+  int local_ny = params->ny / nproc; /* split by rows, by the number of processes */
+
   /* open the parameter file */
   fp = fopen(paramfile, "r");
 
@@ -569,6 +582,11 @@ int initialise(const char* paramfile, const char* obstaclefile,
 
   if (*cells_ptr == NULL) die("cannot allocate memory for cells", __LINE__, __FILE__);
 
+  /* allocate memory for total cells array */
+  *total_cells_ptr = (t_speed*)malloc(sizeof(t_speed) * (params->ny * params->nx));
+  
+  if (*total_cells_ptr == NULL) die("cannot allocate memory for cells", __LINE__, __FILE__);  
+
   /* 'helper' grid, used as scratch space */
   *tmp_cells_ptr = (t_speed*)malloc(sizeof(t_speed) * (params->ny * params->nx));
 
@@ -611,6 +629,15 @@ int initialise(const char* paramfile, const char* obstaclefile,
       (*obstacles_ptr)[ii + jj*params->nx] = 0;
     }
   }
+
+
+
+  *total_obstacles_ptr = malloc(sizeof(int) * (params->ny * params->nx));
+  
+  if (*total_obstacles_ptr == NULL) die("cannot allocate column memory for obstacles", __LINE__, __FILE__);
+
+  /* size of the segment that is scattered */
+  int segment_size = local_ny * params->nx;
 
   /* open the obstacle data file */
   fp = fopen(obstaclefile, "r");
