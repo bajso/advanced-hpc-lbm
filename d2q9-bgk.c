@@ -248,6 +248,7 @@ int main(int argc, char* argv[])
     write_values(params, cells, obstacles, av_vels);
   }
 
+  MPI_Barrier(MPI_COMM_WORLD);
   /* need to finalise with every process to free up memory */
   finalise(&params, &cells, &tmp_cells, &obstacles, &av_vels, &total_obstacles, &total_cells);
 
@@ -648,6 +649,10 @@ int initialise(const char* paramfile, const char* obstaclefile,
   /* open only with master process */
   if (rank == MASTER)
   {
+
+    /* size of the segment that is scattered */
+    int segment_size = local_ny * params->nx;
+
     /* initialise for MPI Scatter */
     *total_obstacles_ptr = malloc(sizeof(int) * (params->ny * params->nx));
     
@@ -662,9 +667,6 @@ int initialise(const char* paramfile, const char* obstaclefile,
         (*total_obstacles_ptr)[ii + jj*params->nx] = 0;
       }
     }
-
-    /* size of the segment that is scattered */
-    int segment_size = local_ny * params->nx;
 
 
     /* open the obstacle data file */
@@ -734,6 +736,12 @@ int finalise(const t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr
 
   free(*av_vels_ptr);
   *av_vels_ptr = NULL;
+
+  free(*total_obstacles_ptr);
+  *total_obstacles_ptr = NULL;
+
+  free(*total_cells_ptr);
+  *total_cells_ptr = NULL;
 
   return EXIT_SUCCESS;
 }
