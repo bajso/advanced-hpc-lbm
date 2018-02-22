@@ -701,6 +701,8 @@ int initialise(const char* paramfile, const char* obstaclefile,
     /* scatter the obstacles array to all other processes */
 
     /* *total_obstacles_ptr, obstacles_prt determine the size of the buffer */
+    MPI_Scatter(total_obstacles_ptr, segment_size, MPI_INT, obstacles_ptr, segment_size, MPI_INT, MASTER, MPI_COMM_WORLD);
+    // or
     // MPI_Scatter(*total_obstacles_ptr, segment_size, MPI_INT, *obstacles_ptr, segment_size, MPI_INT, MASTER, MPI_COMM_WORLD);
 
   }
