@@ -56,9 +56,23 @@
 #include <sys/time.h>
 #include <sys/resource.h>
 
+#include <mpi.h>
+
+#define MASTER          0
 #define NSPEEDS         9
 #define FINALSTATEFILE  "final_state.dat"
 #define AVVELSFILE      "av_vels.dat"
+
+
+/* MPI params */
+int rank; // rank of a process
+int nproc; // number of processes in the communicator
+int flag; // check if MPI_Init() has been called
+int tag = 0; // message tag
+MPI_Status status; // struct used by MPI_Recv
+int above_rank;
+int below_rank;
+
 
 /* struct to hold the parameter values */
 typedef struct
@@ -136,6 +150,10 @@ int main(int argc, char* argv[])
   double usrtim;                /* floating point number to record elapsed user CPU time */
   double systim;                /* floating point number to record elapsed system CPU time */
 
+  t_speed* total_cells = NULL; /* total cells pointer for MPI Gather */
+  int* total_obstacles = NULL; /* total obstacles pointer */
+
+
   /* parse the command line */
   if (argc != 3)
   {
@@ -147,12 +165,43 @@ int main(int argc, char* argv[])
     obstaclefile = argv[2];
   }
 
+
+   /* initialise the MPI env */
+  MPI_Init(&argc, &argv);
+
+  /* check whether the initialisation was successful */
+  MPI_Initialized(&flag);
+  if (flag != 1) {
+    MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+  }
+
+  /*) number of processes */
+  MPI_Comm_size(MPI_COMM_WORLD, &nproc);
+  /* rank of the current process */
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+
   /* initialise our data structures and load values from file */
   initialise(paramfile, obstaclefile, &params, &cells, &tmp_cells, &obstacles, &av_vels);
 
   /* iterate for maxIters timesteps */
   gettimeofday(&timstr, NULL);
   tic = timstr.tv_sec + (timstr.tv_usec / 1000000.0);
+
+
+   /* MPI type for t_speed */
+  int blocklen[1] = {NSPEEDS};
+  MPI_Datatype mpi_t_speed;
+  MPI_Datatype type[1] = {MPI_FLOAT};
+  MPI_Aint offset[1];
+  offset[0] = offsetof(t_speed, speeds);
+  MPI_Type_create_struct(1, blocklen, offset, type, &mpi_t_speed);
+  MPI_Type_commit(&mpi_t_speed);
+
+  int local_ny = params.ny / nproc; /* split by rows, by the number of processes */
+  int segment_size = local_ny * params.nx; /* size of the segment that is scattered */
+  int total_size = params.ny * params.nx;
+
 
   for (int tt = 0; tt < params.maxIters; tt++)
   {
