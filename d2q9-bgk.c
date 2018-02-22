@@ -273,27 +273,40 @@ int accelerate_flow(const t_param params, t_speed* cells, int* obstacles)
   float w1 = params.density * params.accel / 9.f;
   float w2 = params.density * params.accel / 36.f;
 
-  /* modify the 2nd row of the grid */
-  int jj = params.ny - 2;
-
-  for (int ii = 0; ii < params.nx; ii++)
+  /* acc flow is done only on the topmost row, which is part of the last rank */
+  if (rank == nproc - 1)
   {
-    /* if the cell is not occupied and
-    ** we don't send a negative density */
-    if (!obstacles[ii + jj*params.nx]
-        && (cells[ii + jj*params.nx].speeds[3] - w1) > 0.f
-        && (cells[ii + jj*params.nx].speeds[6] - w2) > 0.f
-        && (cells[ii + jj*params.nx].speeds[7] - w2) > 0.f)
+  
+    /* modify the 2nd row of the grid */
+
+    /* int jj = params.ny - 2 */
+    /* 3 = -2 -1 for halo exchange row */
+    int jj = (local_ny + 2) - 3;
+
+    for (int ii = 0; ii < params.nx; ii++)
     {
-      /* increase 'east-side' densities */
-      cells[ii + jj*params.nx].speeds[1] += w1;
-      cells[ii + jj*params.nx].speeds[5] += w2;
-      cells[ii + jj*params.nx].speeds[8] += w2;
-      /* decrease 'west-side' densities */
-      cells[ii + jj*params.nx].speeds[3] -= w1;
-      cells[ii + jj*params.nx].speeds[6] -= w2;
-      cells[ii + jj*params.nx].speeds[7] -= w2;
+      /* if the cell is not occupied and
+      ** we don't send a negative density */
+
+      /* is it (jj + 1) even if int jj = -1 ? */
+      /* or just obstacles (jj - 1) */
+
+      if (!obstacles[ii + jj*params.nx]
+          && (cells[ii + (jj + 1)*params.nx].speeds[3] - w1) > 0.f
+          && (cells[ii + (jj + 1)*params.nx].speeds[6] - w2) > 0.f
+          && (cells[ii + (jj + 1)*params.nx].speeds[7] - w2) > 0.f)
+      {
+        /* increase 'east-side' densities */
+        cells[ii + (jj + 1)*params.nx].speeds[1] += w1;
+        cells[ii + (jj + 1)*params.nx].speeds[5] += w2;
+        cells[ii + (jj + 1)*params.nx].speeds[8] += w2;
+        /* decrease 'west-side' densities */
+        cells[ii + (jj + 1)*params.nx].speeds[3] -= w1;
+        cells[ii + (jj + 1)*params.nx].speeds[6] -= w2;
+        cells[ii + (jj + 1)*params.nx].speeds[7] -= w2;
+      }
     }
+
   }
 
   return EXIT_SUCCESS;
