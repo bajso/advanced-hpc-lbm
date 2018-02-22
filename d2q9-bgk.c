@@ -209,10 +209,14 @@ int main(int argc, char* argv[])
 
     if (rank == MASTER)
     {
-      
-      // MPI gather all cells
 
-      // MPI gather all obstacles
+      /* gather all subsets of cells at master */
+      /* gather and truncate the cells array without the halo exchanges */
+      // MPI_Gather(&cells[params.nx], total_size, mpi_t_speed, total_cells, total_size, mpi_t_speed, MASTER, MPI_COMM_WORLD);
+
+
+      /* gather all subsets of obstacles at master */
+      // MPI_Gather(obstacles, total_size, MPI_INT, total_obstacles, total_size, MPI_INT, MASTER, MPI_COMM_WORLD);
 
 
       av_vels[tt] = av_velocity(params, cells, obstacles);
@@ -244,9 +248,10 @@ int main(int argc, char* argv[])
     write_values(params, cells, obstacles, av_vels);
   }
 
+  /* need to finalise with every process to free up memory */
   finalise(&params, &cells, &tmp_cells, &obstacles, &av_vels, &total_obstacles, &total_cells);
 
-  // Finalize the MPI environment.
+  /* Finalise the MPI env */
   MPI_Finalize();
 
   return EXIT_SUCCESS;
@@ -578,7 +583,9 @@ int initialise(const char* paramfile, const char* obstaclefile,
   */
 
   /* main grid */
-  *cells_ptr = (t_speed*)malloc(sizeof(t_speed) * (params->ny * params->nx));
+
+  /* split rows, +1 top +1 bottom for halo exchange */
+  *cells_ptr = (t_speed*)malloc(sizeof(t_speed) * ((local_ny + 2) * params->nx));
 
   if (*cells_ptr == NULL) die("cannot allocate memory for cells", __LINE__, __FILE__);
 
@@ -588,41 +595,48 @@ int initialise(const char* paramfile, const char* obstaclefile,
   if (*total_cells_ptr == NULL) die("cannot allocate memory for cells", __LINE__, __FILE__);  
 
   /* 'helper' grid, used as scratch space */
-  *tmp_cells_ptr = (t_speed*)malloc(sizeof(t_speed) * (params->ny * params->nx));
+  *tmp_cells_ptr = (t_speed*)malloc(sizeof(t_speed) * ((local_ny + 2) * params->nx));
 
   if (*tmp_cells_ptr == NULL) die("cannot allocate memory for tmp_cells", __LINE__, __FILE__);
 
   /* the map of obstacles */
-  *obstacles_ptr = malloc(sizeof(int) * (params->ny * params->nx));
+  
+  /* no need for + 2 since no calculation is performed there */
+  /* every process allocates memory for this array */
+  *obstacles_ptr = malloc(sizeof(int) * (local_ny * params->nx));
 
   if (*obstacles_ptr == NULL) die("cannot allocate column memory for obstacles", __LINE__, __FILE__);
+
 
   /* initialise densities */
   float w0 = params->density * 4.f / 9.f;
   float w1 = params->density      / 9.f;
   float w2 = params->density      / 36.f;
 
-  for (int jj = 0; jj < params->ny; jj++)
+ for (int jj = 0; jj < local_ny; jj++)
   {
     for (int ii = 0; ii < params->nx; ii++)
     {
+      /* first and last rows are for halo exchange - 0|1|1|1|1|0 */
+      /* add + 1 to jj access the second row */
+
       /* centre */
-      (*cells_ptr)[ii + jj*params->nx].speeds[0] = w0;
+      (*cells_ptr)[ii + (jj + 1)*params->nx].speeds[0] = w0;
       /* axis directions */
-      (*cells_ptr)[ii + jj*params->nx].speeds[1] = w1;
-      (*cells_ptr)[ii + jj*params->nx].speeds[2] = w1;
-      (*cells_ptr)[ii + jj*params->nx].speeds[3] = w1;
-      (*cells_ptr)[ii + jj*params->nx].speeds[4] = w1;
+      (*cells_ptr)[ii + (jj + 1)*params->nx].speeds[1] = w1;
+      (*cells_ptr)[ii + (jj + 1)*params->nx].speeds[2] = w1;
+      (*cells_ptr)[ii + (jj + 1)*params->nx].speeds[3] = w1;
+      (*cells_ptr)[ii + (jj + 1)*params->nx].speeds[4] = w1;
       /* diagonals */
-      (*cells_ptr)[ii + jj*params->nx].speeds[5] = w2;
-      (*cells_ptr)[ii + jj*params->nx].speeds[6] = w2;
-      (*cells_ptr)[ii + jj*params->nx].speeds[7] = w2;
-      (*cells_ptr)[ii + jj*params->nx].speeds[8] = w2;
+      (*cells_ptr)[ii + (jj + 1)*params->nx].speeds[5] = w2;
+      (*cells_ptr)[ii + (jj + 1)*params->nx].speeds[6] = w2;
+      (*cells_ptr)[ii + (jj + 1)*params->nx].speeds[7] = w2;
+      (*cells_ptr)[ii + (jj + 1)*params->nx].speeds[8] = w2;
     }
   }
 
   /* first set all cells in obstacle array to zero */
-  for (int jj = 0; jj < params->ny; jj++)
+  for (int jj = 0; jj < local_ny; jj++)
   {
     for (int ii = 0; ii < params->nx; ii++)
     {
@@ -631,46 +645,73 @@ int initialise(const char* paramfile, const char* obstaclefile,
   }
 
 
-
-  *total_obstacles_ptr = malloc(sizeof(int) * (params->ny * params->nx));
-  
-  if (*total_obstacles_ptr == NULL) die("cannot allocate column memory for obstacles", __LINE__, __FILE__);
-
-  /* size of the segment that is scattered */
-  int segment_size = local_ny * params->nx;
-
-  /* open the obstacle data file */
-  fp = fopen(obstaclefile, "r");
-
-  if (fp == NULL)
+  /* open only with master process */
+  if (rank == MASTER)
   {
-    sprintf(message, "could not open input obstacles file: %s", obstaclefile);
-    die(message, __LINE__, __FILE__);
+    /* initialise for MPI Scatter */
+    *total_obstacles_ptr = malloc(sizeof(int) * (params->ny * params->nx));
+    
+    if (*total_obstacles_ptr == NULL) die("cannot allocate column memory for obstacles", __LINE__, __FILE__);
+
+    /* first initialise all cells in total obstacle array to zero */
+    /* is this necessary? */
+    for (int jj = 0; jj < params->ny; jj++)
+    {
+      for (int ii = 0; ii < params->nx; ii++)
+      {
+        (*total_obstacles_ptr)[ii + jj*params->nx] = 0;
+      }
+    }
+
+    /* size of the segment that is scattered */
+    int segment_size = local_ny * params->nx;
+
+
+    /* open the obstacle data file */
+    fp = fopen(obstaclefile, "r");
+
+    if (fp == NULL)
+    {
+      sprintf(message, "could not open input obstacles file: %s", obstaclefile);
+      die(message, __LINE__, __FILE__);
+    }
+
+    /* read-in the blocked cells list */
+    while ((retval = fscanf(fp, "%d %d %d\n", &xx, &yy, &blocked)) != EOF)
+    {
+      /* some checks */
+      if (retval != 3) die("expected 3 values per line in obstacle file", __LINE__, __FILE__);
+
+      if (xx < 0 || xx > params->nx - 1) die("obstacle x-coord out of range", __LINE__, __FILE__);
+
+      if (yy < 0 || yy > params->ny - 1) die("obstacle y-coord out of range", __LINE__, __FILE__);
+
+      if (blocked != 1) die("obstacle blocked value should be 1", __LINE__, __FILE__);
+
+      /* assign to array */
+      (*total_obstacles_ptr)[xx + yy*params->nx] = blocked;
+    }
+
+    /* and close the file */
+    fclose(fp);
+
+
+    /* scatter the obstacles array to all other processes */
+
+    /* *total_obstacles_ptr, obstacles_prt determine the size of the buffer */
+    // MPI_Scatter(*total_obstacles_ptr, segment_size, MPI_INT, *obstacles_ptr, segment_size, MPI_INT, MASTER, MPI_COMM_WORLD);
+
   }
 
-  /* read-in the blocked cells list */
-  while ((retval = fscanf(fp, "%d %d %d\n", &xx, &yy, &blocked)) != EOF)
-  {
-    /* some checks */
-    if (retval != 3) die("expected 3 values per line in obstacle file", __LINE__, __FILE__);
-
-    if (xx < 0 || xx > params->nx - 1) die("obstacle x-coord out of range", __LINE__, __FILE__);
-
-    if (yy < 0 || yy > params->ny - 1) die("obstacle y-coord out of range", __LINE__, __FILE__);
-
-    if (blocked != 1) die("obstacle blocked value should be 1", __LINE__, __FILE__);
-
-    /* assign to array */
-    (*obstacles_ptr)[xx + yy*params->nx] = blocked;
-  }
-
-  /* and close the file */
-  fclose(fp);
+  MPI_Barrier(MPI_COMM_WORLD);
+  printf("\n\nCHECKPOINT 719\n\n");
 
   /*
   ** allocate space to hold a record of the avarage velocities computed
   ** at each timestep
   */
+
+  /* this could also be only performed by a master process */
   *av_vels_ptr = (float*)malloc(sizeof(float) * params->maxIters);
 
   return EXIT_SUCCESS;
