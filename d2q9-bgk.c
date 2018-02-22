@@ -281,7 +281,7 @@ int accelerate_flow(const t_param params, t_speed* cells, int* obstacles)
 
     /* int jj = params.ny - 2 */
     /* 3 = -2 -1 for halo exchange row */
-    int jj = (local_ny + 2) - 3;
+    int jj = ((params.ny / nproc) + 2) - 3;
 
     for (int ii = 0; ii < params.nx; ii++)
     {

@@ -2,9 +2,9 @@
 
 #SBATCH --job-name d2q9-bgk
 #SBATCH --nodes 1
-#SBATCH --ntasks-per-node 1
-#SBATCH --time 00:15:00
-#SBATCH --partition teaching
+#SBATCH --ntasks-per-node 4
+#SBATCH --time 00:05:00
+##SBATCH --partition teaching
 #SBATCH --output d2q9-bgk.out
 
 echo Running on host `hostname`
@@ -14,5 +14,11 @@ echo Slurm job ID is $SLURM_JOB_ID
 echo This job runs on the following machines:
 echo `echo $SLURM_JOB_NODELIST | uniq`
 
+#! application name
+application="d2q9-bgk"
+
+#! Run options for the application
+options="input_128x128.params obstacles_128x128.dat"
+
 #! Run the executable
-./d2q9-bgk input_128x128.params obstacles_128x128.dat
+mpirun ./$application $options
