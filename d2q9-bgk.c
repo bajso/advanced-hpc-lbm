@@ -212,7 +212,7 @@ int main(int argc, char* argv[])
 
       /* gather all subsets of cells at master */
       /* gather and truncate the cells array without the halo exchanges */
-      // MPI_Gather(&cells[params.nx], total_size, mpi_t_speed, total_cells, total_size, mpi_t_speed, MASTER, MPI_COMM_WORLD);
+      MPI_Gather(&cells[params.nx], total_size, mpi_t_speed, total_cells, total_size, mpi_t_speed, MASTER, MPI_COMM_WORLD);
 
 
       /* gather all subsets of obstacles at master */
