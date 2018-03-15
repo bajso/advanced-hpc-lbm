@@ -166,7 +166,7 @@ int main(int argc, char* argv[])
   }
 
 
-   /* initialise the MPI env */
+  /* initialise the MPI env */
   MPI_Init(&argc, &argv);
 
   /* check whether the initialisation was successful */
@@ -207,20 +207,20 @@ int main(int argc, char* argv[])
   {
     timestep(params, cells, tmp_cells, obstacles);
 
+    
+    /* gather all subsets of cells at master */
+    /* gather and truncate the cells array without the halo exchanges */
+
+    /* all processes need to call this methos, still only gathers at master */
+    MPI_Gather(&cells[params.nx], total_size, mpi_t_speed, total_cells, total_size, mpi_t_speed, MASTER, MPI_COMM_WORLD);
+
+    /* gather all subsets of obstacles at master */
+    // MPI_Gather(obstacles, total_size, MPI_INT, total_obstacles, total_size, MPI_INT, MASTER, MPI_COMM_WORLD);
+
     if (rank == MASTER)
     {
-
-      /* gather all subsets of cells at master */
-      /* gather and truncate the cells array without the halo exchanges */
-      MPI_Gather(&cells[params.nx], total_size, mpi_t_speed, total_cells, total_size, mpi_t_speed, MASTER, MPI_COMM_WORLD);
-
-
-      /* gather all subsets of obstacles at master */
-      // MPI_Gather(obstacles, total_size, MPI_INT, total_obstacles, total_size, MPI_INT, MASTER, MPI_COMM_WORLD);
-
-
+      /* better way is to have a local av_vels that and only gather everything once after the timestep is finished */
       av_vels[tt] = av_velocity(params, cells, obstacles);
-
     }
 #ifdef DEBUG
     printf("==timestep: %d==\n", tt);
@@ -248,7 +248,7 @@ int main(int argc, char* argv[])
     write_values(params, cells, obstacles, av_vels);
   }
 
-  MPI_Barrier(MPI_COMM_WORLD);
+  // MPI_Barrier(MPI_COMM_WORLD);
   /* need to finalise with every process to free up memory */
   finalise(&params, &cells, &tmp_cells, &obstacles, &av_vels, &total_obstacles, &total_cells);
 
@@ -260,7 +260,11 @@ int main(int argc, char* argv[])
 
 int timestep(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles)
 {
-  accelerate_flow(params, cells, obstacles);
+  /* acc flow is done only on the topmost row, which is part of the last rank */
+  if (rank == nproc - 1)
+  {
+    accelerate_flow(params, cells, obstacles);
+  }
   propagate(params, cells, tmp_cells);
   rebound(params, cells, tmp_cells, obstacles);
   collision(params, cells, tmp_cells, obstacles);
@@ -272,10 +276,6 @@ int accelerate_flow(const t_param params, t_speed* cells, int* obstacles)
   /* compute weighting factors */
   float w1 = params.density * params.accel / 9.f;
   float w2 = params.density * params.accel / 36.f;
-
-  /* acc flow is done only on the topmost row, which is part of the last rank */
-  if (rank == nproc - 1)
-  {
   
     /* modify the 2nd row of the grid */
 
@@ -306,8 +306,6 @@ int accelerate_flow(const t_param params, t_speed* cells, int* obstacles)
         cells[ii + (jj + 1)*params.nx].speeds[7] -= w2;
       }
     }
-
-  }
 
   return EXIT_SUCCESS;
 }
@@ -534,8 +532,6 @@ int initialise(const char* paramfile, const char* obstaclefile,
   int    blocked;        /* indicates whether a cell is blocked by an obstacle */
   int    retval;         /* to hold return value for checking */
 
-  int local_ny = params->ny / nproc; /* split by rows, by the number of processes */
-
   /* open the parameter file */
   fp = fopen(paramfile, "r");
 
@@ -598,6 +594,12 @@ int initialise(const char* paramfile, const char* obstaclefile,
 
   /* main grid */
 
+  int local_ny = params->ny / nproc; /* split by rows, by the number of processes */
+
+  if (rank == MASTER) {
+    printf("\n\nNproc: %d\nLocal ny: %d\nParams nx: %d\nParams ny: %d\n", nproc, local_ny, params->nx, params->ny);
+  }
+
   /* split rows, +1 top +1 bottom for halo exchange */
   *cells_ptr = (t_speed*)malloc(sizeof(t_speed) * ((local_ny + 2) * params->nx));
 
@@ -658,14 +660,12 @@ int initialise(const char* paramfile, const char* obstaclefile,
     }
   }
 
+  /* size of the segment that is scattered */
+  int segment_size = local_ny * params->nx;
 
   /* open only with master process */
   if (rank == MASTER)
   {
-
-    /* size of the segment that is scattered */
-    int segment_size = local_ny * params->nx;
-
     /* initialise for MPI Scatter */
     *total_obstacles_ptr = malloc(sizeof(int) * (params->ny * params->nx));
     
@@ -680,7 +680,6 @@ int initialise(const char* paramfile, const char* obstaclefile,
         (*total_obstacles_ptr)[ii + jj*params->nx] = 0;
       }
     }
-
 
     /* open the obstacle data file */
     fp = fopen(obstaclefile, "r");
@@ -709,19 +708,15 @@ int initialise(const char* paramfile, const char* obstaclefile,
 
     /* and close the file */
     fclose(fp);
-
-
-    /* scatter the obstacles array to all other processes */
-
-    /* *total_obstacles_ptr, obstacles_prt determine the size of the buffer */
-    MPI_Scatter(total_obstacles_ptr, segment_size, MPI_INT, obstacles_ptr, segment_size, MPI_INT, MASTER, MPI_COMM_WORLD);
-    // or
-    // MPI_Scatter(*total_obstacles_ptr, segment_size, MPI_INT, *obstacles_ptr, segment_size, MPI_INT, MASTER, MPI_COMM_WORLD);
-
   }
 
+  /* scatter the obstacles array to all other processes */
+  /* *total_obstacles_ptr, obstacles_prt determine the size of the buffer */  
+  MPI_Scatter(*total_obstacles_ptr, segment_size, MPI_INT, *obstacles_ptr, segment_size, MPI_INT, MASTER, MPI_COMM_WORLD);
+
+  
   MPI_Barrier(MPI_COMM_WORLD);
-  printf("\n\nCHECKPOINT 719\n\n");
+  printf("\nCHECKPOINT 719\n");
 
   /*
   ** allocate space to hold a record of the avarage velocities computed
