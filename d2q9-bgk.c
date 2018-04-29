@@ -202,20 +202,36 @@ int main(int argc, char* argv[])
   int segment_size = local_ny * params.nx; /* size of the segment that is scattered */
   int total_size = params.ny * params.nx;
 
+  if (rank == MASTER) {
+    printf("\nNproc: %d\nLocal ny: %d\nParams nx: %d\nParams ny: %d\nSegment: %d\nTotal: %d\n", nproc, local_ny, params.nx, params.ny, segment_size, total_size);
+  }
+
+  printf("\nCHECKPOINT 209\n");
+  MPI_Barrier(MPI_COMM_WORLD);
 
   for (int tt = 0; tt < params.maxIters; tt++)
   {
-    timestep(params, cells, tmp_cells, obstacles);
 
-    
-    /* gather all subsets of cells at master */
-    /* gather and truncate the cells array without the halo exchanges */
+    // MPI_Barrier(MPI_COMM_WORLD);
 
-    /* all processes need to call this methos, still only gathers at master */
-    MPI_Gather(&cells[params.nx], total_size, mpi_t_speed, total_cells, total_size, mpi_t_speed, MASTER, MPI_COMM_WORLD);
+    // Fails on calling MPI_Gather with process with rank 3 ?!
+
+    // if (rank != 3) {
 
     /* gather all subsets of obstacles at master */
-    // MPI_Gather(obstacles, total_size, MPI_INT, total_obstacles, total_size, MPI_INT, MASTER, MPI_COMM_WORLD);
+    MPI_Gather(obstacles, total_size, MPI_INT, total_obstacles, total_size, MPI_INT, MASTER, MPI_COMM_WORLD);
+
+    // }
+    printf("\nRank: %d\nCHECKPOINT 219\n", rank);
+
+
+    // timestep(params, cells, tmp_cells, obstacles);
+
+
+    /* gather all subsets of cells at master */
+    /* gather and truncate the cells array without the halo exchanges */
+    MPI_Gather(&cells[params.nx], total_size, mpi_t_speed, total_cells, total_size, mpi_t_speed, MASTER, MPI_COMM_WORLD);
+
 
     if (rank == MASTER)
     {
@@ -276,7 +292,7 @@ int accelerate_flow(const t_param params, t_speed* cells, int* obstacles)
   /* compute weighting factors */
   float w1 = params.density * params.accel / 9.f;
   float w2 = params.density * params.accel / 36.f;
-  
+
     /* modify the 2nd row of the grid */
 
     /* int jj = params.ny - 2 */
@@ -597,7 +613,7 @@ int initialise(const char* paramfile, const char* obstaclefile,
   int local_ny = params->ny / nproc; /* split by rows, by the number of processes */
 
   if (rank == MASTER) {
-    printf("\n\nNproc: %d\nLocal ny: %d\nParams nx: %d\nParams ny: %d\n", nproc, local_ny, params->nx, params->ny);
+    printf("\nNproc: %d\nLocal ny: %d\nParams nx: %d\nParams ny: %d\n", nproc, local_ny, params->nx, params->ny);
   }
 
   /* split rows, +1 top +1 bottom for halo exchange */
@@ -607,8 +623,8 @@ int initialise(const char* paramfile, const char* obstaclefile,
 
   /* allocate memory for total cells array */
   *total_cells_ptr = (t_speed*)malloc(sizeof(t_speed) * (params->ny * params->nx));
-  
-  if (*total_cells_ptr == NULL) die("cannot allocate memory for cells", __LINE__, __FILE__);  
+
+  if (*total_cells_ptr == NULL) die("cannot allocate memory for cells", __LINE__, __FILE__);
 
   /* 'helper' grid, used as scratch space */
   *tmp_cells_ptr = (t_speed*)malloc(sizeof(t_speed) * ((local_ny + 2) * params->nx));
@@ -616,12 +632,17 @@ int initialise(const char* paramfile, const char* obstaclefile,
   if (*tmp_cells_ptr == NULL) die("cannot allocate memory for tmp_cells", __LINE__, __FILE__);
 
   /* the map of obstacles */
-  
+
   /* no need for + 2 since no calculation is performed there */
   /* every process allocates memory for this array */
   *obstacles_ptr = malloc(sizeof(int) * (local_ny * params->nx));
 
   if (*obstacles_ptr == NULL) die("cannot allocate column memory for obstacles", __LINE__, __FILE__);
+
+  /* initialise for MPI Scatter */
+  *total_obstacles_ptr = malloc(sizeof(int) * (params->ny * params->nx));
+
+  if (*total_obstacles_ptr == NULL) die("cannot allocate column memory for obstacles", __LINE__, __FILE__);
 
 
   /* initialise densities */
@@ -648,39 +669,27 @@ int initialise(const char* paramfile, const char* obstaclefile,
       (*cells_ptr)[ii + (jj + 1)*params->nx].speeds[6] = w2;
       (*cells_ptr)[ii + (jj + 1)*params->nx].speeds[7] = w2;
       (*cells_ptr)[ii + (jj + 1)*params->nx].speeds[8] = w2;
-    }
-  }
 
-  /* first set all cells in obstacle array to zero */
-  for (int jj = 0; jj < local_ny; jj++)
-  {
-    for (int ii = 0; ii < params->nx; ii++)
-    {
+
+      /* first set all cells in obstacle array to zero */
       (*obstacles_ptr)[ii + jj*params->nx] = 0;
     }
   }
+  /* does it even need to be initialised? */
+  for (int jj = 0; jj < params->ny; jj++)
+  {
+    for (int ii = 0; ii < params->nx; ii++)
+    {
+      (*total_obstacles_ptr)[ii + jj*params->nx] = 0;
+    }
+  }
+
 
   /* size of the segment that is scattered */
   int segment_size = local_ny * params->nx;
 
-  /* open only with master process */
   if (rank == MASTER)
   {
-    /* initialise for MPI Scatter */
-    *total_obstacles_ptr = malloc(sizeof(int) * (params->ny * params->nx));
-    
-    if (*total_obstacles_ptr == NULL) die("cannot allocate column memory for obstacles", __LINE__, __FILE__);
-
-    /* first initialise all cells in total obstacle array to zero */
-    /* is this necessary? */
-    for (int jj = 0; jj < params->ny; jj++)
-    {
-      for (int ii = 0; ii < params->nx; ii++)
-      {
-        (*total_obstacles_ptr)[ii + jj*params->nx] = 0;
-      }
-    }
-
     /* open the obstacle data file */
     fp = fopen(obstaclefile, "r");
 
@@ -710,13 +719,28 @@ int initialise(const char* paramfile, const char* obstaclefile,
     fclose(fp);
   }
 
+
+  /* still have no idea what I'm doing here .... */
+
+  printf("\n\n\n\nRank %d\nValue %d\n", rank, **total_obstacles_ptr );
   /* scatter the obstacles array to all other processes */
-  /* *total_obstacles_ptr, obstacles_prt determine the size of the buffer */  
+  /* *total_obstacles_ptr, obstacles_ptr determine the size of the buffer */
   MPI_Scatter(*total_obstacles_ptr, segment_size, MPI_INT, *obstacles_ptr, segment_size, MPI_INT, MASTER, MPI_COMM_WORLD);
 
-  
-  MPI_Barrier(MPI_COMM_WORLD);
+  printf("Rank %d\nValue %d\n", rank, **total_obstacles_ptr );
+
+  if (rank == 3) {
+    for (int jj = 0; jj < local_ny; jj++)
+    {
+      for (int ii = 0; ii < params->nx; ii++)
+      {
+        printf("%d | ", **obstacles_ptr );
+      }
+    }
+  }
+
   printf("\nCHECKPOINT 719\n");
+  MPI_Barrier(MPI_COMM_WORLD);
 
   /*
   ** allocate space to hold a record of the avarage velocities computed
