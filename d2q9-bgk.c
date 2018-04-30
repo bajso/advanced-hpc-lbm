@@ -207,26 +207,22 @@ int main(int argc, char* argv[])
   int total_size = params.ny * params.nx;
 
   if (rank == MASTER) {
-    printf("\nNproc: %d\nLocal ny: %d\nParams nx: %d\nParams ny: %d\nSegment: %d\nTotal: %d\n", nproc, local_ny, params.nx, params.ny, segment_size, total_size);
+    printf("\nNproc: %d\nLocal ny: %d\nParams nx: %d\nParams ny: %d\nSegment: %d\nTotal: %d\n\n", nproc, local_ny, params.nx, params.ny, segment_size, total_size);
   }
-
-  // printf("\nCHECKPOINT 209\n");
-  MPI_Barrier(MPI_COMM_WORLD);
 
   for (int tt = 0; tt < params.maxIters; tt++)
   {
 
-    // TODO if segment_size is used as buffer size then MPI_Gather fails with process 3 ?!
-
     /* gather all subsets of obstacles at master */
-    // Why gather obstacles if no computation is done on them and they don't change
-    MPI_Gather(obstacles, 1, MPI_INT, total_obstacles, 1, MPI_INT, MASTER, MPI_COMM_WORLD);
+    // TODO Why gather obstacles if no computation is done on them and they don't change
 
-    printf("\nRank: %d\nCHECKPOINT 219\n", rank);
+    MPI_Gather(obstacles, segment_size, MPI_INT, total_obstacles, segment_size, MPI_INT, MASTER, MPI_COMM_WORLD);
+
+    printf("Rank %d CHECKPOINT 221\n", rank);
+    MPI_Barrier(MPI_COMM_WORLD);
 
 
     timestep(params, cells, tmp_cells, obstacles);
-
 
 
     // TODO this does not work
@@ -614,10 +610,6 @@ int initialise(const char* paramfile, const char* obstaclefile,
 
   int local_ny = params->ny / nproc; /* split by rows, by the number of processes */
 
-  if (rank == MASTER) {
-    printf("\nNproc: %d\nLocal ny: %d\nParams nx: %d\nParams ny: %d\n", nproc, local_ny, params->nx, params->ny);
-  }
-
   /* split rows, +1 top +1 bottom for halo exchange */
   *cells_ptr = (t_speed*)malloc(sizeof(t_speed) * ((local_ny + 2) * params->nx));
 
@@ -686,8 +678,11 @@ int initialise(const char* paramfile, const char* obstaclefile,
     }
   }
 
+  int segment_size = local_ny * params->nx;
   if (rank == MASTER)
   {
+    // printf("\nSegement size:%d\n", segment_size);
+
     /* open the obstacle data file */
     fp = fopen(obstaclefile, "r");
 
@@ -718,18 +713,18 @@ int initialise(const char* paramfile, const char* obstaclefile,
   }
 
   /* scatter the obstacles array to all other processes */
-  /* *total_obstacles_ptr, obstacles_ptr determine the size of the buffer */
+  /* total_obstacles_ptr, obstacles_ptr determine the size of the buffer */
 
   /* size of the segment that is scattered */
-  int segment_size = local_ny * params->nx;
-  /* buffer size = 1 or segment size?*/
 
-  MPI_Scatter(*total_obstacles_ptr, 1, MPI_INT, *obstacles_ptr, 1, MPI_INT, MASTER, MPI_COMM_WORLD);
+  /* TODO buffer size = 1 or segment size?*/
 
-  printf("\nRank %d\nValue total_obstacles_ptr %d\n", rank, **total_obstacles_ptr );
-  printf("Rank %d\nValue obstacles_ptr %d\n", rank, **obstacles_ptr );
+  MPI_Scatter(*total_obstacles_ptr, segment_size, MPI_INT, *obstacles_ptr, segment_size, MPI_INT, MASTER, MPI_COMM_WORLD);
 
-  printf("Rank %d CHECKPOINT 735\n", rank);
+  // printf("\nRank %d\nValue total_obstacles_ptr %d\n", rank, **total_obstacles_ptr );
+  // printf("Rank %d\nValue obstacles_ptr %d\n", rank, **obstacles_ptr );
+
+  printf("Rank %d CHECKPOINT 727\n", rank);
   MPI_Barrier(MPI_COMM_WORLD);
 
   /*
