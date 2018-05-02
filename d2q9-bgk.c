@@ -70,8 +70,8 @@ int nproc; // number of processes in the communicator
 int flag; // check if MPI_Init() has been called
 int tag = 0; // message tag
 MPI_Status status; // struct used by MPI_Recv
-int above_rank;
-int below_rank;
+int top_rank;
+int bottom_rank;
 
 
 /* struct to hold the parameter values */
@@ -91,6 +91,10 @@ typedef struct
 {
   float speeds[NSPEEDS];
 } t_speed;
+
+t_speed* sendbuf;
+t_speed* recvbuf;
+
 
 /*
 ** function prototypes
@@ -184,8 +188,8 @@ int main(int argc, char* argv[])
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
   /* determine process ranks above and below the current rank respecting periodic boundary conditions */
-  above_rank = (rank == MASTER) ? (rank + nproc - 1) : (rank - 1);
-  below_rank = (rank + 1) % nproc;
+  top_rank = (rank == MASTER) ? (rank + nproc - 1) : (rank - 1);
+  bottom_rank = (rank + 1) % nproc;
 
 
   /* initialise our data structures and load values from file */
@@ -196,7 +200,7 @@ int main(int argc, char* argv[])
   tic = timstr.tv_sec + (timstr.tv_usec / 1000000.0);
 
 
-   /* MPI type for t_speed */
+  /* MPI type for t_speed */
   int blocklen[1] = {NSPEEDS};
   MPI_Datatype mpi_t_speed;
   MPI_Datatype type[1] = {MPI_FLOAT};
@@ -302,7 +306,8 @@ int accelerate_flow(const t_param params, t_speed* cells, int* obstacles)
 
     /* int jj = params.ny - 2 */
     /* 3 = -2 -1 for halo exchange row */
-    int jj = ((params.ny / nproc) + 2) - 3;
+    int local_ny = calc_nrows_from_nproc(rank, nproc, params.ny);
+    int jj = (local_ny + 2) - 3;
 
     for (int ii = 0; ii < params.nx; ii++)
     {
@@ -333,8 +338,59 @@ int accelerate_flow(const t_param params, t_speed* cells, int* obstacles)
 
 int propagate(const t_param params, t_speed* cells, t_speed* tmp_cells)
 {
+
+  /* MPI type for t_speed */
+  int blocklen[1] = {NSPEEDS};
+  MPI_Datatype mpi_t_speed;
+  MPI_Datatype type[1] = {MPI_FLOAT};
+  MPI_Aint offset[1];
+  offset[0] = offsetof(t_speed, speeds);
+  MPI_Type_create_struct(1, blocklen, offset, type, &mpi_t_speed);
+  MPI_Type_commit(&mpi_t_speed);
+
+  int local_ny = calc_nrows_from_nproc(rank, nproc, params.ny);
+  int i;
+  /* send up, receive from the bottom */
+
+  // flatten 2D array
+  // array[width * row + col] = value;
+
+  // copy first Cells row into buffer
+  for(i = 0; i < params.nx; i++) {
+    sendbuf[i] = cells[(1 * params.nx) + i];
+  }
+
+  MPI_Sendrecv(sendbuf, params.nx, mpi_t_speed, top_rank, tag, recvbuf, params.nx, mpi_t_speed, bottom_rank, tag, MPI_COMM_WORLD, &status);
+
+  // replace buffer elements with halo row in Cells
+  for(i = 0; i < params.nx; i++) {
+    // this is the bottom halo row - local_ny + 1
+    cells[((local_ny + 1) * params.nx) + i] = recvbuf[i];
+    tmp_cells[((local_ny + 1) * params.nx) + i] = recvbuf[i];
+  }
+
+  /* send down, receive from the top */
+
+  // copy last Cells row into buffer
+  for(i = 0; i < params.nx; i++) {
+    sendbuf[i] = cells[(local_ny * params.nx) + i];
+  }
+
+  MPI_Sendrecv(sendbuf, params.nx, mpi_t_speed, bottom_rank, tag, recvbuf, params.nx, mpi_t_speed, top_rank, tag, MPI_COMM_WORLD, &status);
+
+  // replace buffer elements with halo row in Cells
+  for(i = 0; i < params.nx; i++) {
+    // this is the top halo row - 0
+    cells[(0 * params.nx) + i] = recvbuf[i];
+    tmp_cells[(0 * params.nx) + i] = recvbuf[i];
+  }
+
+printf("Rank %d CHECKPOINT 383\n", rank);
+MPI_Barrier(MPI_COMM_WORLD);
+
+
   /* loop over _all_ cells */
-  for (int jj = 0; jj < params.ny; jj++)
+  for (int jj = 0; jj < local_ny; jj++)
   {
     for (int ii = 0; ii < params.nx; ii++)
     {
@@ -644,6 +700,10 @@ int initialise(const char* paramfile, const char* obstaclefile,
   *total_obstacles_ptr = malloc(sizeof(int) * (params->ny * params->nx));
 
   if (*total_obstacles_ptr == NULL) die("cannot allocate column memory for obstacles", __LINE__, __FILE__);
+
+  /* allocate buffer space */
+  sendbuf = (t_speed*)malloc(sizeof(t_speed) * params->nx); // fits one column of cells
+  recvbuf = (t_speed*)malloc(sizeof(t_speed) * params->nx);
 
 
   /* initialise densities */
