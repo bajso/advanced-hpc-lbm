@@ -422,8 +422,10 @@ MPI_Barrier(MPI_COMM_WORLD);
 
 int rebound(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles)
 {
+  int local_ny = calc_nrows_from_nproc(rank, nproc, params.ny);
+
   /* loop over the cells in the grid */
-  for (int jj = 0; jj < params.ny; jj++)
+  for (int jj = 0; jj < local_ny; jj++)
   {
     for (int ii = 0; ii < params.nx; ii++)
     {
@@ -432,17 +434,20 @@ int rebound(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obsta
       {
         /* called after propagate, so taking values from scratch space
         ** mirroring, and writing into main grid */
-        cells[ii + jj*params.nx].speeds[1] = tmp_cells[ii + jj*params.nx].speeds[3];
-        cells[ii + jj*params.nx].speeds[2] = tmp_cells[ii + jj*params.nx].speeds[4];
-        cells[ii + jj*params.nx].speeds[3] = tmp_cells[ii + jj*params.nx].speeds[1];
-        cells[ii + jj*params.nx].speeds[4] = tmp_cells[ii + jj*params.nx].speeds[2];
-        cells[ii + jj*params.nx].speeds[5] = tmp_cells[ii + jj*params.nx].speeds[7];
-        cells[ii + jj*params.nx].speeds[6] = tmp_cells[ii + jj*params.nx].speeds[8];
-        cells[ii + jj*params.nx].speeds[7] = tmp_cells[ii + jj*params.nx].speeds[5];
-        cells[ii + jj*params.nx].speeds[8] = tmp_cells[ii + jj*params.nx].speeds[6];
+        cells[ii + (jj + 1)*params.nx].speeds[1] = tmp_cells[ii + (jj + 1)*params.nx].speeds[3];
+        cells[ii + (jj + 1)*params.nx].speeds[2] = tmp_cells[ii + (jj + 1)*params.nx].speeds[4];
+        cells[ii + (jj + 1)*params.nx].speeds[3] = tmp_cells[ii + (jj + 1)*params.nx].speeds[1];
+        cells[ii + (jj + 1)*params.nx].speeds[4] = tmp_cells[ii + (jj + 1)*params.nx].speeds[2];
+        cells[ii + (jj + 1)*params.nx].speeds[5] = tmp_cells[ii + (jj + 1)*params.nx].speeds[7];
+        cells[ii + (jj + 1)*params.nx].speeds[6] = tmp_cells[ii + (jj + 1)*params.nx].speeds[8];
+        cells[ii + (jj + 1)*params.nx].speeds[7] = tmp_cells[ii + (jj + 1)*params.nx].speeds[5];
+        cells[ii + (jj + 1)*params.nx].speeds[8] = tmp_cells[ii + (jj + 1)*params.nx].speeds[6];
       }
     }
   }
+
+  printf("Rank %d CHECKPOINT 449\n", rank);
+  MPI_Barrier(MPI_COMM_WORLD);
 
   return EXIT_SUCCESS;
 }
