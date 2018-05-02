@@ -388,7 +388,6 @@ int propagate(const t_param params, t_speed* cells, t_speed* tmp_cells)
 printf("Rank %d CHECKPOINT 383\n", rank);
 MPI_Barrier(MPI_COMM_WORLD);
 
-
   /* loop over _all_ cells */
   for (int jj = 0; jj < local_ny; jj++)
   {
@@ -396,24 +395,27 @@ MPI_Barrier(MPI_COMM_WORLD);
     {
       /* determine indices of axis-direction neighbours
       ** respecting periodic boundary conditions (wrap around) */
-      int y_n = (jj + 1) % params.ny;
+      int y_n = ((jj + 1) + 1) % local_ny;
       int x_e = (ii + 1) % params.nx;
-      int y_s = (jj == 0) ? (jj + params.ny - 1) : (jj - 1);
+      int y_s = ((jj + 1) == 0) ? ((jj + 1) + local_ny - 1) : ((jj + 1) - 1);
       int x_w = (ii == 0) ? (ii + params.nx - 1) : (ii - 1);
       /* propagate densities from neighbouring cells, following
       ** appropriate directions of travel and writing into
       ** scratch space grid */
-      tmp_cells[ii + jj*params.nx].speeds[0] = cells[ii + jj*params.nx].speeds[0]; /* central cell, no movement */
-      tmp_cells[ii + jj*params.nx].speeds[1] = cells[x_w + jj*params.nx].speeds[1]; /* east */
-      tmp_cells[ii + jj*params.nx].speeds[2] = cells[ii + y_s*params.nx].speeds[2]; /* north */
-      tmp_cells[ii + jj*params.nx].speeds[3] = cells[x_e + jj*params.nx].speeds[3]; /* west */
-      tmp_cells[ii + jj*params.nx].speeds[4] = cells[ii + y_n*params.nx].speeds[4]; /* south */
-      tmp_cells[ii + jj*params.nx].speeds[5] = cells[x_w + y_s*params.nx].speeds[5]; /* north-east */
-      tmp_cells[ii + jj*params.nx].speeds[6] = cells[x_e + y_s*params.nx].speeds[6]; /* north-west */
-      tmp_cells[ii + jj*params.nx].speeds[7] = cells[x_e + y_n*params.nx].speeds[7]; /* south-west */
-      tmp_cells[ii + jj*params.nx].speeds[8] = cells[x_w + y_n*params.nx].speeds[8]; /* south-east */
+      tmp_cells[ii + (jj + 1)*params.nx].speeds[0] = cells[ii + (jj + 1)*params.nx].speeds[0]; /* central cell, no movement */
+      tmp_cells[ii + (jj + 1)*params.nx].speeds[1] = cells[x_w + (jj + 1)*params.nx].speeds[1]; /* east */
+      tmp_cells[ii + (jj + 1)*params.nx].speeds[2] = cells[ii + y_s*params.nx].speeds[2]; /* north */
+      tmp_cells[ii + (jj + 1)*params.nx].speeds[3] = cells[x_e + (jj + 1)*params.nx].speeds[3]; /* west */
+      tmp_cells[ii + (jj + 1)*params.nx].speeds[4] = cells[ii + y_n*params.nx].speeds[4]; /* south */
+      tmp_cells[ii + (jj + 1)*params.nx].speeds[5] = cells[x_w + y_s*params.nx].speeds[5]; /* north-east */
+      tmp_cells[ii + (jj + 1)*params.nx].speeds[6] = cells[x_e + y_s*params.nx].speeds[6]; /* north-west */
+      tmp_cells[ii + (jj + 1)*params.nx].speeds[7] = cells[x_e + y_n*params.nx].speeds[7]; /* south-west */
+      tmp_cells[ii + (jj + 1)*params.nx].speeds[8] = cells[x_w + y_n*params.nx].speeds[8]; /* south-east */
     }
   }
+
+  printf("Rank %d CHECKPOINT 417\n", rank);
+  MPI_Barrier(MPI_COMM_WORLD);
 
   return EXIT_SUCCESS;
 }
