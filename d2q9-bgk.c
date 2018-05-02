@@ -159,6 +159,7 @@ int main(int argc, char* argv[])
 
   t_speed* total_cells = NULL; /* total cells pointer for MPI Gather */
   int* total_obstacles = NULL; /* total obstacles pointer */
+  t_speed* cells_reduced = NULL;
 
 
   /* parse the command line */
@@ -171,7 +172,6 @@ int main(int argc, char* argv[])
     paramfile = argv[1];
     obstaclefile = argv[2];
   }
-
 
   /* initialise the MPI env */
   MPI_Init(&argc, &argv);
@@ -211,38 +211,40 @@ int main(int argc, char* argv[])
 
   int local_ny = calc_nrows_from_nproc(rank, nproc, params.ny);
   int segment_size = local_ny * params.nx; /* size of the segment that is scattered */
-  int total_size = params.ny * params.nx;
 
   if (rank == MASTER) {
-    printf("\nNproc: %d\nLocal ny: %d\nParams nx: %d\nParams ny: %d\nSegment: %d\nTotal: %d\n\n", nproc, local_ny, params.nx, params.ny, segment_size, total_size);
+    printf("\nNproc: %d\nLocal ny: %d\nParams nx: %d\nParams ny: %d\nSegment: %d\n", nproc, local_ny, params.nx, params.ny, segment_size);
   }
+
+  cells_reduced = (t_speed*)malloc(sizeof(t_speed) * (local_ny * params.nx));
 
   for (int tt = 0; tt < params.maxIters; tt++)
   {
+    timestep(params, cells, tmp_cells, obstacles);
 
     /* gather all subsets of obstacles at master */
     // TODO Why gather obstacles if no computation is done on them and they don't change
-
     MPI_Gather(obstacles, segment_size, MPI_INT, total_obstacles, segment_size, MPI_INT, MASTER, MPI_COMM_WORLD);
 
-    printf("Rank %d CHECKPOINT 221\n", rank);
-    MPI_Barrier(MPI_COMM_WORLD);
+    /* truncate the cells array without the halo exchanges */
+    // TODO could use &cells[params.nx] ?
+    for (int jj = 0; jj < local_ny; jj++)
+    {
+      for (int ii = 0; ii < params.nx; ii++)
+      {
+        cells_reduced[ii + jj*params.nx] = cells[ii + (jj+1)*params.nx];
+      }
+    }
 
-
-    timestep(params, cells, tmp_cells, obstacles);
-
-
-    // TODO this does not work
     /* gather all subsets of cells at master */
-    /* gather and truncate the cells array without the halo exchanges */
-    MPI_Gather(&cells[params.nx], total_size, mpi_t_speed, total_cells, total_size, mpi_t_speed, MASTER, MPI_COMM_WORLD);
+    MPI_Gather(cells_reduced, segment_size, mpi_t_speed, total_cells, segment_size, mpi_t_speed, MASTER, MPI_COMM_WORLD);
 
 
     if (rank == MASTER)
     {
       /* better way is to have a local av_vels that and only gather everything once after the timestep is finished */
       // TODO maybe use MPI_Reduce()
-      av_vels[tt] = av_velocity(params, cells, obstacles);
+      av_vels[tt] = av_velocity(params, total_cells, total_obstacles);
     }
 #ifdef DEBUG
     printf("==timestep: %d==\n", tt);
@@ -263,11 +265,11 @@ int main(int argc, char* argv[])
   if (rank == MASTER)
   {
     printf("==done==\n");
-    printf("Reynolds number:\t\t%.12E\n", calc_reynolds(params, cells, obstacles));
+    printf("Reynolds number:\t\t%.12E\n", calc_reynolds(params, total_cells, total_obstacles));
     printf("Elapsed time:\t\t\t%.6lf (s)\n", toc - tic);
     printf("Elapsed user CPU time:\t\t%.6lf (s)\n", usrtim);
     printf("Elapsed system CPU time:\t%.6lf (s)\n", systim);
-    write_values(params, cells, obstacles, av_vels);
+    write_values(params, total_cells, total_obstacles, av_vels);
   }
 
   // MPI_Barrier(MPI_COMM_WORLD);
@@ -286,10 +288,7 @@ int timestep(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obst
   if (rank == nproc - 1)
   {
     accelerate_flow(params, cells, obstacles);
-    printf("Rank %d CHECKPOINT 283\n", rank);
   }
-  MPI_Barrier(MPI_COMM_WORLD);
-
   propagate(params, cells, tmp_cells);
   rebound(params, cells, tmp_cells, obstacles);
   collision(params, cells, tmp_cells, obstacles);
@@ -385,9 +384,6 @@ int propagate(const t_param params, t_speed* cells, t_speed* tmp_cells)
     tmp_cells[(0 * params.nx) + i] = recvbuf[i];
   }
 
-printf("Rank %d CHECKPOINT 383\n", rank);
-MPI_Barrier(MPI_COMM_WORLD);
-
   /* loop over _all_ cells */
   for (int jj = 0; jj < local_ny; jj++)
   {
@@ -413,9 +409,6 @@ MPI_Barrier(MPI_COMM_WORLD);
       tmp_cells[ii + (jj + 1)*params.nx].speeds[8] = cells[x_w + y_n*params.nx].speeds[8]; /* south-east */
     }
   }
-
-  printf("Rank %d CHECKPOINT 417\n", rank);
-  MPI_Barrier(MPI_COMM_WORLD);
 
   return EXIT_SUCCESS;
 }
@@ -446,9 +439,6 @@ int rebound(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obsta
     }
   }
 
-  printf("Rank %d CHECKPOINT 449\n", rank);
-  MPI_Barrier(MPI_COMM_WORLD);
-
   return EXIT_SUCCESS;
 }
 
@@ -459,11 +449,13 @@ int collision(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obs
   const float w1 = 1.f / 9.f;  /* weighting factor */
   const float w2 = 1.f / 36.f; /* weighting factor */
 
+  int local_ny = calc_nrows_from_nproc(rank, nproc, params.ny);
+
   /* loop over the cells in the grid
   ** NB the collision step is called after
   ** the propagate step and so values of interest
   ** are in the scratch-space grid */
-  for (int jj = 0; jj < params.ny; jj++)
+  for (int jj = 0; jj < local_ny; jj++)
   {
     for (int ii = 0; ii < params.nx; ii++)
     {
@@ -475,24 +467,24 @@ int collision(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obs
 
         for (int kk = 0; kk < NSPEEDS; kk++)
         {
-          local_density += tmp_cells[ii + jj*params.nx].speeds[kk];
+          local_density += tmp_cells[ii + (jj + 1)*params.nx].speeds[kk];
         }
 
         /* compute x velocity component */
-        float u_x = (tmp_cells[ii + jj*params.nx].speeds[1]
-                      + tmp_cells[ii + jj*params.nx].speeds[5]
-                      + tmp_cells[ii + jj*params.nx].speeds[8]
-                      - (tmp_cells[ii + jj*params.nx].speeds[3]
-                         + tmp_cells[ii + jj*params.nx].speeds[6]
-                         + tmp_cells[ii + jj*params.nx].speeds[7]))
+        float u_x = (tmp_cells[ii + (jj + 1)*params.nx].speeds[1]
+                      + tmp_cells[ii + (jj + 1)*params.nx].speeds[5]
+                      + tmp_cells[ii + (jj + 1)*params.nx].speeds[8]
+                      - (tmp_cells[ii + (jj + 1)*params.nx].speeds[3]
+                         + tmp_cells[ii + (jj + 1)*params.nx].speeds[6]
+                         + tmp_cells[ii + (jj + 1)*params.nx].speeds[7]))
                      / local_density;
         /* compute y velocity component */
-        float u_y = (tmp_cells[ii + jj*params.nx].speeds[2]
-                      + tmp_cells[ii + jj*params.nx].speeds[5]
-                      + tmp_cells[ii + jj*params.nx].speeds[6]
-                      - (tmp_cells[ii + jj*params.nx].speeds[4]
-                         + tmp_cells[ii + jj*params.nx].speeds[7]
-                         + tmp_cells[ii + jj*params.nx].speeds[8]))
+        float u_y = (tmp_cells[ii + (jj + 1)*params.nx].speeds[2]
+                      + tmp_cells[ii + (jj + 1)*params.nx].speeds[5]
+                      + tmp_cells[ii + (jj + 1)*params.nx].speeds[6]
+                      - (tmp_cells[ii + (jj + 1)*params.nx].speeds[4]
+                         + tmp_cells[ii + (jj + 1)*params.nx].speeds[7]
+                         + tmp_cells[ii + (jj + 1)*params.nx].speeds[8]))
                      / local_density;
 
         /* velocity squared */
@@ -544,9 +536,9 @@ int collision(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obs
         /* relaxation step */
         for (int kk = 0; kk < NSPEEDS; kk++)
         {
-          cells[ii + jj*params.nx].speeds[kk] = tmp_cells[ii + jj*params.nx].speeds[kk]
+          cells[ii + (jj + 1)*params.nx].speeds[kk] = tmp_cells[ii + (jj + 1)*params.nx].speeds[kk]
                                                   + params.omega
-                                                  * (d_equ[kk] - tmp_cells[ii + jj*params.nx].speeds[kk]);
+                                                  * (d_equ[kk] - tmp_cells[ii + (jj + 1)*params.nx].speeds[kk]);
         }
       }
     }
@@ -752,11 +744,8 @@ int initialise(const char* paramfile, const char* obstaclefile,
     }
   }
 
-  int segment_size = local_ny * params->nx;
   if (rank == MASTER)
   {
-    // printf("\nSegement size:%d\n", segment_size);
-
     /* open the obstacle data file */
     fp = fopen(obstaclefile, "r");
 
@@ -787,19 +776,8 @@ int initialise(const char* paramfile, const char* obstaclefile,
   }
 
   /* scatter the obstacles array to all other processes */
-  /* total_obstacles_ptr, obstacles_ptr determine the size of the buffer */
-
-  /* size of the segment that is scattered */
-
-  /* TODO buffer size = 1 or segment size?*/
-
+  int segment_size = local_ny * params->nx;
   MPI_Scatter(*total_obstacles_ptr, segment_size, MPI_INT, *obstacles_ptr, segment_size, MPI_INT, MASTER, MPI_COMM_WORLD);
-
-  // printf("\nRank %d\nValue total_obstacles_ptr %d\n", rank, **total_obstacles_ptr );
-  // printf("Rank %d\nValue obstacles_ptr %d\n", rank, **obstacles_ptr );
-
-  printf("Rank %d CHECKPOINT 727\n", rank);
-  MPI_Barrier(MPI_COMM_WORLD);
 
   /*
   ** allocate space to hold a record of the avarage velocities computed
