@@ -96,6 +96,9 @@ typedef struct
 ** function prototypes
 */
 
+/* split by rows, by the number of processes */
+int calc_nrows_from_nproc(int rank, int nproc, int ny);
+
 /* load params, allocate memory, load obstacles & initialise fluid particle densities */
 int initialise(const char* paramfile, const char* obstaclefile,
                t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr,
@@ -202,7 +205,7 @@ int main(int argc, char* argv[])
   MPI_Type_create_struct(1, blocklen, offset, type, &mpi_t_speed);
   MPI_Type_commit(&mpi_t_speed);
 
-  int local_ny = params.ny / nproc; /* split by rows, by the number of processes */
+  int local_ny = calc_nrows_from_nproc(rank, nproc, params.ny);
   int segment_size = local_ny * params.nx; /* size of the segment that is scattered */
   int total_size = params.ny * params.nx;
 
@@ -234,6 +237,7 @@ int main(int argc, char* argv[])
     if (rank == MASTER)
     {
       /* better way is to have a local av_vels that and only gather everything once after the timestep is finished */
+      // TODO maybe use MPI_Reduce()
       av_vels[tt] = av_velocity(params, cells, obstacles);
     }
 #ifdef DEBUG
@@ -278,7 +282,10 @@ int timestep(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obst
   if (rank == nproc - 1)
   {
     accelerate_flow(params, cells, obstacles);
+    printf("Rank %d CHECKPOINT 283\n", rank);
   }
+  MPI_Barrier(MPI_COMM_WORLD);
+
   propagate(params, cells, tmp_cells);
   rebound(params, cells, tmp_cells, obstacles);
   collision(params, cells, tmp_cells, obstacles);
@@ -608,7 +615,7 @@ int initialise(const char* paramfile, const char* obstaclefile,
 
   /* main grid */
 
-  int local_ny = params->ny / nproc; /* split by rows, by the number of processes */
+  int local_ny = calc_nrows_from_nproc(rank, nproc, params->ny);
 
   /* split rows, +1 top +1 bottom for halo exchange */
   *cells_ptr = (t_speed*)malloc(sizeof(t_speed) * ((local_ny + 2) * params->nx));
@@ -886,4 +893,18 @@ void usage(const char* exe)
 {
   fprintf(stderr, "Usage: %s <paramfile> <obstaclefile>\n", exe);
   exit(EXIT_FAILURE);
+}
+
+int calc_nrows_from_nproc(int rank, int nproc, int ny)
+{
+  int local_ny;
+
+  local_ny = ny / nproc;
+  if ((ny % nproc) != 0) {  /* if there is a remainder */
+    if (rank == nproc - 1) {
+      local_ny += ny % nproc;  /* add remainder to last rank */
+    }
+  }
+
+  return local_ny;
 }
