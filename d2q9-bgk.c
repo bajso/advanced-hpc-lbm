@@ -246,11 +246,11 @@ int main(int argc, char* argv[])
     }
   }
 
-  /* gather all subsets of cells at master */
-  MPI_Gather(cells_reduced, segment_size, mpi_t_speed, total_cells, segment_size, mpi_t_speed, MASTER, MPI_COMM_WORLD);
-
   /* reduce all av_vels at master */
   MPI_Reduce(local_av_vels, av_vels, 1, MPI_FLOAT, MPI_SUM, MASTER, MPI_COMM_WORLD);
+
+  /* gather all subsets of cells at master */
+  MPI_Gather(cells_reduced, segment_size, mpi_t_speed, total_cells, segment_size, mpi_t_speed, MASTER, MPI_COMM_WORLD);
 
 
   gettimeofday(&timstr, NULL);
@@ -285,24 +285,25 @@ int main(int argc, char* argv[])
 
 int timestep(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles)
 {
-  // if (calc_ncols_from_rank(rank, nproc, params.ny) > 1) {
-  //   /* acc flow is done only on the topmost row, which is part of the last rank */
-  //   if (rank == nproc - 1)
-  //   {
-  //     accelerate_flow(params, cells, obstacles);
-  //   }
-  // }
-  // else {
-    // /* acc flow needs at least 2 rows, this is only for 64+ nodes on 128x128 grid */
-    // if (rank == nproc - 2)
-    // {
-    //   accelerate_flow(params, cells, obstacles);
-    // }
-  // }
-  if (rank == nproc - 1)
+
+  if (calc_nrows_from_nproc(rank, nproc, params.ny) > 1) {
+    /* acc flow is done only on the topmost row, which is part of the last rank */
+    if (rank == nproc - 1)
     {
       accelerate_flow(params, cells, obstacles);
     }
+  }
+  else {
+    /* acc flow needs at least 2 rows, this is only for 64+ nodes on 128x128 grid */
+    if (rank == nproc - 2)
+    {
+      accelerate_flow(params, cells, obstacles);
+    }
+  }
+  // if (rank == nproc - 1)
+  //   {
+  //     accelerate_flow(params, cells, obstacles);
+  //   }
 
   propagate(params, cells, tmp_cells);
   rebound(params, cells, tmp_cells, obstacles);
@@ -841,8 +842,8 @@ int finalise(const t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr
   free(*cells_reduced_ptr);
   *cells_reduced_ptr = NULL;
 
-  free(*local_av_vels_ptr);
-  *local_av_vels_ptr = NULL;
+  // free(*local_av_vels_ptr);
+  // *local_av_vels_ptr = NULL;
 
   return EXIT_SUCCESS;
 }
@@ -975,9 +976,10 @@ int calc_nrows_from_nproc(int rank, int nproc, int ny)
   int local_ny;
 
   local_ny = ny / nproc;
-  if ((ny % nproc) != 0) {  /* if there is a remainder */
-    if (rank < nproc - 1) {
-      local_ny += 1;  /* add remainder to last rank */
+  int remain = ny % nproc;
+  if (remain != 0) {  /* if there is a remainder */
+    if (rank < remain) {
+      local_ny += 1;  /* add remainder to ranks smaller than remainder */
     }
   }
 
