@@ -113,12 +113,11 @@ int initialise(const char* paramfile, const char* obstaclefile,
 /*
 ** The main calculation methods.
 ** timestep calls, in order, the functions:
-** accelerate_flow(), propagate(), rebound() & collision()
+** accelerate_flow(), propagate() & collision()
 */
 int timestep(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles);
 int accelerate_flow(const t_param params, t_speed* cells, int* obstacles);
 int propagate(const t_param params, t_speed* cells, t_speed* tmp_cells);
-int rebound(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles);
 int collision(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles);
 int write_values(const t_param params, t_speed* cells, int* obstacles, float* av_vels);
 
@@ -300,13 +299,8 @@ int timestep(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obst
       accelerate_flow(params, cells, obstacles);
     }
   }
-  // if (rank == nproc - 1)
-  //   {
-  //     accelerate_flow(params, cells, obstacles);
-  //   }
 
   propagate(params, cells, tmp_cells);
-  rebound(params, cells, tmp_cells, obstacles);
   collision(params, cells, tmp_cells, obstacles);
   return EXIT_SUCCESS;
 }
@@ -429,11 +423,19 @@ int propagate(const t_param params, t_speed* cells, t_speed* tmp_cells)
   return EXIT_SUCCESS;
 }
 
-int rebound(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles)
+int collision(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles)
 {
+  const float c_sq = 1.f / 3.f; /* square of speed of sound */
+  const float w0 = 4.f / 9.f;  /* weighting factor */
+  const float w1 = 1.f / 9.f;  /* weighting factor */
+  const float w2 = 1.f / 36.f; /* weighting factor */
+
   int local_ny = calc_nrows_from_nproc(rank, nproc, params.ny);
 
-  /* loop over the cells in the grid */
+  /* loop over the cells in the grid
+  ** NB the collision step is called after
+  ** the propagate step and so values of interest
+  ** are in the scratch-space grid */
   for (int jj = 0; jj < local_ny; jj++)
   {
     for (int ii = 0; ii < params.nx; ii++)
@@ -452,29 +454,6 @@ int rebound(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obsta
         cells[ii + (jj + 1)*params.nx].speeds[7] = tmp_cells[ii + (jj + 1)*params.nx].speeds[5];
         cells[ii + (jj + 1)*params.nx].speeds[8] = tmp_cells[ii + (jj + 1)*params.nx].speeds[6];
       }
-    }
-  }
-
-  return EXIT_SUCCESS;
-}
-
-int collision(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles)
-{
-  const float c_sq = 1.f / 3.f; /* square of speed of sound */
-  const float w0 = 4.f / 9.f;  /* weighting factor */
-  const float w1 = 1.f / 9.f;  /* weighting factor */
-  const float w2 = 1.f / 36.f; /* weighting factor */
-
-  int local_ny = calc_nrows_from_nproc(rank, nproc, params.ny);
-
-  /* loop over the cells in the grid
-  ** NB the collision step is called after
-  ** the propagate step and so values of interest
-  ** are in the scratch-space grid */
-  for (int jj = 0; jj < local_ny; jj++)
-  {
-    for (int ii = 0; ii < params.nx; ii++)
-    {
       /* don't consider occupied cells */
       if (!obstacles[ii + jj*params.nx])
       {
