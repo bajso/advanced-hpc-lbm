@@ -216,10 +216,10 @@ int main(int argc, char* argv[])
   int local_ny = calc_nrows_from_nproc(rank, nproc, params.ny);
   int segment_size = local_ny * params.nx; /* size of the segment that is scattered */
 
-  if (rank == MASTER) {
-    printf("\nNproc: %d\nLocal ny: %d\nParams nx: %d\nParams ny: %d\nSegment: %d\n",
-    nproc, local_ny, params.nx, params.ny, segment_size);
-  }
+  // if (rank == MASTER) {
+  //   printf("\nNproc: %d\nLocal ny: %d\nParams nx: %d\nParams ny: %d\nSegment: %d\n",
+  //   nproc, local_ny, params.nx, params.ny, segment_size);
+  // }
 
   global_av = 0; // marks that av_vels is run in the local scope
 
@@ -316,7 +316,7 @@ int accelerate_flow(const t_param params, t_speed* cells, int* obstacles)
 
     /* -3 = -2 -1 for halo exchange row */
     int local_ny = calc_nrows_from_nproc(rank, nproc, params.ny);
-    // only local_ny + 1 since we care about the bottom row only
+    // only local_ny + 1 since we care about the top row only
     int jj = (local_ny + 1) - 3;
 
     for (int ii = 0; ii < params.nx; ii++)
