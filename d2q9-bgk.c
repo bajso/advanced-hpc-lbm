@@ -250,7 +250,7 @@ int main(int argc, char* argv[])
   MPI_Gather(cells_reduced, segment_size, mpi_t_speed, total_cells, segment_size, mpi_t_speed, MASTER, MPI_COMM_WORLD);
 
   /* reduce all av_vels at master */
-  MPI_Reduce(local_av_vels, av_vels, segment_size, MPI_FLOAT, MPI_SUM, MASTER, MPI_COMM_WORLD);
+  MPI_Reduce(local_av_vels, av_vels, 1, MPI_FLOAT, MPI_SUM, MASTER, MPI_COMM_WORLD);
 
 
   gettimeofday(&timstr, NULL);
@@ -976,8 +976,8 @@ int calc_nrows_from_nproc(int rank, int nproc, int ny)
 
   local_ny = ny / nproc;
   if ((ny % nproc) != 0) {  /* if there is a remainder */
-    if (rank == nproc - 1) {
-      local_ny += ny % nproc;  /* add remainder to last rank */
+    if (rank < nproc - 1) {
+      local_ny += 1;  /* add remainder to last rank */
     }
   }
 
