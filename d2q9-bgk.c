@@ -242,7 +242,7 @@ int main(int argc, char* argv[])
   {
     for (int ii = 0; ii < params.nx; ii++)
     {
-      cells_reduced[ii + jj*params.nx] = cells[ii + (jj+1)*params.nx];
+      cells_reduced[ii + jj*params.nx] = cells[ii + (jj + 1)*params.nx];
     }
   }
 
@@ -285,11 +285,25 @@ int main(int argc, char* argv[])
 
 int timestep(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles)
 {
-  /* acc flow is done only on the topmost row, which is part of the last rank */
+  // if (calc_ncols_from_rank(rank, nproc, params.ny) > 1) {
+  //   /* acc flow is done only on the topmost row, which is part of the last rank */
+  //   if (rank == nproc - 1)
+  //   {
+  //     accelerate_flow(params, cells, obstacles);
+  //   }
+  // }
+  // else {
+    // /* acc flow needs at least 2 rows, this is only for 64+ nodes on 128x128 grid */
+    // if (rank == nproc - 2)
+    // {
+    //   accelerate_flow(params, cells, obstacles);
+    // }
+  // }
   if (rank == nproc - 1)
-  {
-    accelerate_flow(params, cells, obstacles);
-  }
+    {
+      accelerate_flow(params, cells, obstacles);
+    }
+
   propagate(params, cells, tmp_cells);
   rebound(params, cells, tmp_cells, obstacles);
   collision(params, cells, tmp_cells, obstacles);
@@ -303,10 +317,11 @@ int accelerate_flow(const t_param params, t_speed* cells, int* obstacles)
   float w2 = params.density * params.accel / 36.f;
 
     /* modify the 2nd row of the grid */
-
     /* int jj = params.ny - 2 */
-    /* 3 = -2 -1 for halo exchange row */
+
+    /* -3 = -2 -1 for halo exchange row */
     int local_ny = calc_nrows_from_nproc(rank, nproc, params.ny);
+    // only local_ny + 1 since we care about the bottom row only
     int jj = (local_ny + 1) - 3;
 
     for (int ii = 0; ii < params.nx; ii++)
@@ -315,18 +330,18 @@ int accelerate_flow(const t_param params, t_speed* cells, int* obstacles)
       ** we don't send a negative density */
 
       if (!obstacles[ii + jj*params.nx]
-          && (cells[ii + (jj+1)*params.nx].speeds[3] - w1) > 0.f
-          && (cells[ii + (jj+1)*params.nx].speeds[6] - w2) > 0.f
-          && (cells[ii + (jj+1)*params.nx].speeds[7] - w2) > 0.f)
+          && (cells[ii + (jj + 1)*params.nx].speeds[3] - w1) > 0.f
+          && (cells[ii + (jj + 1)*params.nx].speeds[6] - w2) > 0.f
+          && (cells[ii + (jj + 1)*params.nx].speeds[7] - w2) > 0.f)
       {
         /* increase 'east-side' densities */
-        cells[ii + (jj+1)*params.nx].speeds[1] += w1;
-        cells[ii + (jj+1)*params.nx].speeds[5] += w2;
-        cells[ii + (jj+1)*params.nx].speeds[8] += w2;
+        cells[ii + (jj + 1)*params.nx].speeds[1] += w1;
+        cells[ii + (jj + 1)*params.nx].speeds[5] += w2;
+        cells[ii + (jj + 1)*params.nx].speeds[8] += w2;
         /* decrease 'west-side' densities */
-        cells[ii + (jj+1)*params.nx].speeds[3] -= w1;
-        cells[ii + (jj+1)*params.nx].speeds[6] -= w2;
-        cells[ii + (jj+1)*params.nx].speeds[7] -= w2;
+        cells[ii + (jj + 1)*params.nx].speeds[3] -= w1;
+        cells[ii + (jj + 1)*params.nx].speeds[6] -= w2;
+        cells[ii + (jj + 1)*params.nx].speeds[7] -= w2;
       }
     }
 
@@ -391,10 +406,8 @@ int propagate(const t_param params, t_speed* cells, t_speed* tmp_cells)
       /* determine indices of axis-direction neighbours
       ** respecting periodic boundary conditions (wrap around) */
 
-      // int y_n = jj + 1;
       int y_n = ((jj + 1) + 1);
       int x_e = (ii + 1) % params.nx;
-      // int y_s = jj - 1;
       int y_s = ((jj + 1) - 1);
       int x_w = (ii == 0) ? (ii + params.nx - 1) : (ii - 1);
       /* propagate densities from neighbouring cells, following
